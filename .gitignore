@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.kosmos/
+*.local
+.DS_Store

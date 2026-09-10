@@ -1,0 +1,14 @@
+#!/usr/bin/env node
+// Same re-exec pattern as worldctl's own bin/worldctl (tools/worldctl) -- Node's ESM loader must
+// have `--import tsx/esm` set BEFORE it starts resolving this process's module graph.
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const cliEntry = path.join(here, '..', 'src', 'cli', 'ksworld.ts');
+const tsxEsm = import.meta.resolve('tsx/esm');
+const result = spawnSync(process.execPath, ['--import', tsxEsm, cliEntry, ...process.argv.slice(2)], {
+  stdio: 'inherit',
+});
+process.exit(result.status ?? 1);

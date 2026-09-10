@@ -1,0 +1,84 @@
+name: "ksworld"
+description: "worldctl's web-safe capabilities (query/content/layout/gamedna/status/validate/propose/plan/resolve/learn) as a GitHub Action"
+author: "chevp"
+branding:
+  icon: "globe"
+  color: "blue"
+
+inputs:
+  root:
+    description: "labs/** root, relative to the checkout root (the tree ksworld reads/mutates)."
+    required: true
+  args:
+    description: "ksworld argv, one token per line (command, subcommand, flags, positionals). See README.md for the command list."
+    required: true
+  state-dir:
+    description: "Proposal/sidecar store, relative to the checkout root. Shared with worldctl's own `.kosmos/worldctl/` convention."
+    required: false
+    default: ".kosmos/worldctl"
+  verbose:
+    description: "Log every filesystem read, one compact line each, to stderr."
+    required: false
+    default: "false"
+  node-version:
+    description: "Node.js version to set up before running ksworld."
+    required: false
+    default: "20"
+
+outputs:
+  status:
+    description: "success or failed, from ksworld's own exit code."
+  output:
+    description: "ksworld's combined stdout."
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install ksworld
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci --omit=dev
+
+    - name: Run ksworld
+      id: run
+      shell: bash
+      env:
+        KSWORLD_ROOT: ${{ inputs.root }}
+        KSWORLD_ARGS: ${{ inputs.args }}
+        KSWORLD_STATE_DIR: ${{ inputs.state-dir }}
+        KSWORLD_VERBOSE: ${{ inputs.verbose }}
+        KSWORLD_BIN: ${{ github.action_path }}/bin/ksworld
+      # `args`/`root` are read from env vars, never interpolated as `${{ }}` directly into this
+      # script -- GitHub Actions expands `${{ }}` as raw text before bash parses the line, so
+      # inlining untrusted input here would let it break out of its quotes (same rationale as
+      # ksforge's own action.yml). One argv token per KSWORLD_ARGS line -- no shell word-splitting,
+      # so a search term or ref containing spaces still arrives as one token.
+      run: |
+        set -euo pipefail
+        args=(--root "$KSWORLD_ROOT" --state-dir "$KSWORLD_STATE_DIR")
+        [ "$KSWORLD_VERBOSE" = "true" ] && args+=(--verbose)
+        while IFS= read -r token; do
+          [ -n "$token" ] && args+=("$token")
+        done <<< "$KSWORLD_ARGS"
+
+        set +e
+        out=$("$KSWORLD_BIN" "${args[@]}" 2>&1)
+        code=$?
+        set -e
+
+        echo "$out"
+        echo "output<<KSWORLD_EOF" >> "$GITHUB_OUTPUT"
+        echo "$out" >> "$GITHUB_OUTPUT"
+        echo "KSWORLD_EOF" >> "$GITHUB_OUTPUT"
+
+        if [ "$code" -eq 0 ]; then
+          echo "status=success" >> "$GITHUB_OUTPUT"
+        else
+          echo "status=failed" >> "$GITHUB_OUTPUT"
+          echo "::error::ksworld exited with code $code"
+        fi
+        exit $code
