@@ -37,7 +37,7 @@ export function registerQueryCommands(program: Command): void {
     .command('diagnose <capability>')
     .description(
       'DIAGNOSIS: why a requirement\'s capability id has no requires-reachable Technique -- ' +
-        'missing/existing-but-misclassified/unregistered/provider-missing/duplicate-candidate/protocol-gap, ' +
+        'missing/existing-but-misclassified/existing-but-unregistered/protocol-gap, ' +
         'plus (only for a true miss) a compact Implementation Specification a coding agent can act on without ' +
         'reading this analysis. Deterministic, no LLM call, writes nothing but --out-dir\'s own JSON file.',
     )
@@ -85,7 +85,7 @@ export function registerQueryCommands(program: Command): void {
         }
 
         console.log(opts.json ? JSON.stringify(diagnosis, null, 2) : formatDiagnosis(diagnosis));
-        if (diagnosis.type !== 'resolved') process.exitCode = 1;
+        process.exitCode = 1;
       },
     );
 }

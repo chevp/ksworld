@@ -133,14 +133,6 @@ export async function validateWorld(projection: WorldProjection, ref?: Ref): Pro
   }
 
   for (const technique of projection.techniques.values()) {
-    if (technique.source === 'capability' && !technique.providedBy) {
-      issues.push({
-        severity: 'warning',
-        category: 'references',
-        ref: technique.ref,
-        message: `${formatRef(technique.ref)}: capability has no resolved provider (source.path matched no known agent)`,
-      });
-    }
     // Free: `requires` edges into a registry Technique are already computed during
     // buildProjection from every Workflow's `--step <name>` match (persistence/index.ts) —
     // no file re-read, no subprocess. Zero incoming edges = no Workflow ever runs it.

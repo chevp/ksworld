@@ -1,15 +1,14 @@
-import type { AgentRef, LabRef, TechniqueRef } from './refs.js';
+import type { LabRef, TechniqueRef } from './refs.js';
 import type { Lifecycle, Provenance } from './provenance.js';
 
-export type TechniqueSource = 'registry' | 'capability' | 'main' | 'package' | 'pipe25d';
+export type TechniqueSource = 'registry' | 'main' | 'package' | 'pipe25d';
 
 /**
- * Addressable capability definition. Four real sources: an
+ * Addressable capability definition. Real sources: an
  * `operations/registry.json` `operation` entry (deterministic build
- * step), a `*.drakar.json` file with `"kind":"capability"` (agent-provided
- * capability), a Lab's `main.json` `provides.techniques[]` entry (a Lab's
+ * step), a Lab's `main.json` `provides.techniques[]` entry (a Lab's
  * OWN claim about what it already provides, e.g. a `*.mechanic.lua` never
- * wrapped in a registry.json operation or a drakar capability -- see
+ * wrapped in a registry.json operation -- see
  * docs/capability-catalog.json's "EXISTING_UNREGISTERED" finding for why
  * this third source exists: the file was real, worldctl just had no source
  * that would ever look at it), or a `registry/techniques/*.json` entry --
@@ -37,8 +36,6 @@ export interface Technique {
   runtime?: string;
   /** registry source only: the CLI args passed to that runtime. */
   args?: string;
-  /** capability source only: the Agent that declares `provides` this capability. */
-  providedBy?: AgentRef;
   /** main source only: absolute path to the real file this technique points at (evidence, not proof — nobody re-verifies it implements the claim). */
   implementation?: string;
   /** package source only: id of this Technique's Capability (registry/capabilities/<id>.json, the WHAT layer this Technique implements). */

@@ -22,13 +22,12 @@ export interface WorldStatus {
       launchers: number;
       data: number;
     };
-    /** Real authored domain objects (parsed from real `*.recipe.eon`/`*.drakar.json`/
-     *  `*.wish.md` files) — deliberately NOT implied to be caused by `catalog` above (a large
-     *  `techniques`/`workflows` count says nothing about how many Recipes/Orders/Requests
-     *  exist; see software-architecture-description.md's 2026-09-09 addendum). */
+    /** Real authored domain objects (parsed from real `*.recipe.eon`/`*.wish.md` files) —
+     *  deliberately NOT implied to be caused by `catalog` above (a large `techniques`/
+     *  `workflows` count says nothing about how many Recipes/Requests exist; see
+     *  software-architecture-description.md's 2026-09-09 addendum). */
     authored: {
       recipes: number;
-      orders: number;
       requests: number;
     };
     /** Evidence that a pipe25d Technique actually ran (`model/techniqueRun.ts`) —
@@ -39,9 +38,7 @@ export interface WorldStatus {
   };
   errors: number;
   warnings: number;
-  /** Token usage summed from `<root>/.worldctl/usage.jsonl` -- only real `claude -p` completions
-   *  (`agent.runner === 'claude'`) ever append to it; `nexo`-run Agents contribute nothing (see
-   *  `read/usage.ts`). */
+  /** Token usage summed from `<root>/.worldctl/usage.jsonl` (see `read/usage.ts`). */
   usage: UsageSummary;
 }
 
@@ -77,7 +74,6 @@ export async function status(projection: WorldProjection, ref?: LabRef): Promise
       },
       authored: {
         recipes: count(projection.recipes),
-        orders: count(projection.orders),
         requests: count(projection.requests),
       },
       techniqueRuns: count(projection.techniqueRuns),

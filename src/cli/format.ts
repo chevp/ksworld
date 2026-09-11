@@ -9,7 +9,6 @@ import type { WorldStatus } from '../read/status.js';
 import type { ValidationCategory, ValidationIssue } from '../validate/validate.js';
 import type { Diff } from '../validate/diff.js';
 import type { Proposal } from './proposals.js';
-import type { ExecutionPlan } from '../resolve/plan.js';
 import type { CapabilityDiagnosis } from '../resolve/diagnose.js';
 
 /**
@@ -50,7 +49,6 @@ export function formatSearchHits(hits: SearchHit[]): string {
 /** Human-readable twin of `diagnose <capability>`'s `--json` output -- same object, formatted for a terminal/log instead of a coding agent. */
 export function formatDiagnosis(diagnosis: CapabilityDiagnosis): string {
   const label = diagnosis.requirement_id ? `${diagnosis.requirement_id} (${diagnosis.capability})` : diagnosis.capability;
-  if (diagnosis.type === 'resolved') return pc.green(`${label}: ${diagnosis.reason}`);
 
   const lines = [pc.yellow(`Warning: ${label}: ${diagnosis.reason} -- ${diagnosis.type}.`)];
   if (diagnosis.implementation) {
@@ -243,23 +241,3 @@ export function formatStatus(status: WorldStatus, pendingProposals: number): str
   return lines.join('\n');
 }
 
-/** The JSON-safe shape of an `ExecutionPlan` (refs formatted as `kind.id` strings) — shared by `formatPlan` and `.gplan.json`'s `plans[]` (resolve/resolveGflow.ts). */
-export interface PlanJson {
-  order: string;
-  target: { kind: 'eon'; pipeline: string } | { kind: 'nexo'; agent: string };
-  steps: string[];
-  data: string[];
-}
-
-export function planToJson(plan: ExecutionPlan): PlanJson {
-  return {
-    order: formatRef(plan.order),
-    target: plan.target.kind === 'eon' ? { kind: 'eon', pipeline: formatRef(plan.target.pipeline) } : { kind: 'nexo', agent: formatRef(plan.target.agent) },
-    steps: plan.steps.map(formatRef),
-    data: plan.data.map(formatRef),
-  };
-}
-
-export function formatPlan(plan: ExecutionPlan): string {
-  return JSON.stringify(planToJson(plan), null, 2);
-}

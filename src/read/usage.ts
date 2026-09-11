@@ -25,9 +25,9 @@ function emptyTotals(): ModelUsageTotals {
 }
 
 /**
- * Reads and sums `<root>/.worldctl/usage.jsonl` (see persistence/usage-log.ts) -- only real
- * `claude -p` completions (`agent.runner === 'claude'`) ever append to it, so a world made
- * entirely of `nexo` Agents legitimately has an empty summary, not a broken one.
+ * Reads and sums `<root>/.worldctl/usage.jsonl` (see persistence/usage-log.ts) -- an
+ * external `claude -p` completion log this reader only displays; a world with no such
+ * log yet legitimately has an empty summary, not a broken one.
  */
 export async function readUsageSummary(root: string): Promise<UsageSummary> {
   const byModel: Record<string, ModelUsageTotals> = {};

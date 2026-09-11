@@ -4,9 +4,8 @@ import type { Lifecycle, Provenance } from './provenance.js';
 /**
  * A `.nexo` pointer — `nexo.exe --help`'s own vocabulary: ".eon is the
  * recipe; .agent is the order; .nexo is the pointer to one or the other."
- * NOT worldctl's `order` (model/order.ts, a classified `*.drakar.json`
- * request) — a launch pointer at a Workflow/Recipe or Agent, found both
- * under `orders/` and elsewhere (e.g. a HUD theme's design-task pointer).
+ * A launch pointer at a Workflow/Recipe or Agent, found both under
+ * `orders/` and elsewhere (e.g. a HUD theme's design-task pointer).
  *
  * Four real `kind`s: `nexo/1` (a single `target: {type, path}`), `nexo/2`,
  * `nexo/4` and `nexo/5` (all three an `agent-network` — `network.nodes[]`,

@@ -6,7 +6,6 @@ import type { Data } from '../model/data.js';
 import type { Lab } from '../model/lab.js';
 import type { Launcher } from '../model/launcher.js';
 import type { Layout } from '../model/layout.js';
-import type { Order } from '../model/order.js';
 import type { Recipe } from '../model/recipe.js';
 import type { Ref } from '../model/refs.js';
 import { formatRef } from '../model/refs.js';
@@ -23,7 +22,6 @@ export type WorldObject =
   | Recipe
   | Agent
   | Action
-  | Order
   | Request
   | Data
   | Launcher

@@ -4,39 +4,23 @@ import type { WorldProjection } from '../persistence/index.js';
 
 /**
  * Why a Requirement's capability id does not resolve to a requires-reachable
- * Technique -- worldctl's own diagnosis, never an LLM's. `resolved` is not a
- * gap: the capability already has an agent-provided (`source: "capability"`)
- * Technique with a real provider, i.e. exactly what an Order's `requires[]`
- * needs (persistence/index.ts's `techniquesByCapabilityId`).
- *
- * The other six mirror `docs/ideas/nexo-4-orchestrator`-adjacent triage, but
- * grounded in the four REAL Technique sources (model/technique.ts) instead of
- * invented ones:
+ * Technique -- worldctl's own diagnosis, never an LLM's. Grounded in the
+ * real Technique sources (model/technique.ts):
  *  - `missing_technique`            no Technique of any source matches at all
  *  - `existing_but_misclassified`   matches a `registry` Technique (a build
  *                                    step) -- exists, but never requires-reachable
  *  - `existing_but_unregistered`    matches a `main` Technique (a Lab's own
  *                                    provides.techniques[] claim) -- real file,
- *                                    no registry/drakar wrapper
- *  - `existing_but_provider_missing` matches a `capability` Technique whose
- *                                    `source.path` resolved no Agent
- *                                    (validate.ts's own existing check)
- *  - `duplicate_candidate`          more than one `capability` Technique
- *                                    claims the same name -- Order resolution
- *                                    silently picks one (`techniquesByCapabilityId`
- *                                    is a Map, last-write-wins)
+ *                                    no registry wrapper
  *  - `protocol_gap`                 matches only a `package` (cap-tech-pipe-lab
  *                                    style) Technique -- technique.ts's own doc
  *                                    comment: "Capabilities themselves ... are
  *                                    NOT a separate worldctl concept yet"
  */
 export const DIAGNOSIS_TYPES = [
-  'resolved',
   'missing_technique',
   'existing_but_misclassified',
   'existing_but_unregistered',
-  'existing_but_provider_missing',
-  'duplicate_candidate',
   'protocol_gap',
 ] as const;
 
@@ -121,7 +105,7 @@ function toMatch(technique: Technique): TechniqueMatch {
 
 /**
  * Exact-match rule, one per Technique source, no fuzzy scoring:
- *  - registry/main/capability: `technique.name === capability` -- ref is
+ *  - registry/main: `technique.name === capability` -- ref is
  *    always `<labId>.<name>`, so this is the field equality the RunService.cpp
  *    prefix/suffix trick (`"technique." + labId + "." + capability`) exists to
  *    approximate from a formatted string; here the field is already at hand.
@@ -188,31 +172,23 @@ function buildImplementationSpec(capability: string, context: RequirementContext
     },
     declaration: {
       kind: 'capability',
-      schemaSource: 'src/mutate/writers/agent-writer.ts (createDrakarCapability)',
+      schemaSource: 'model/technique.ts (source "package": registry/techniques/*.json, capabilityId field)',
       schema: {
-        kind: 'capability',
-        version: 1,
+        kind: 'string (a package Technique\'s "package" source)',
         id: 'string',
-        description: 'string',
-        source: { type: 'string (e.g. "agent", "registry"; only "agent" resolves a providedBy edge)', path: 'string, relative to the .drakar.json' },
+        capabilityId: 'string',
       },
       example: {
-        kind: 'capability',
-        version: 1,
         id: capability,
         description: `Provides ${capability}.`,
-        source: { type: 'agent', path: `../agents/${capability}.agent` },
+        capabilityId: capability,
       },
     },
     registration: {
       required: true,
-      location: `<labId>/declarations/capabilities/${capability.replace(/\./g, '-')}.drakar.json`,
-      command: [
-        `ksworld propose create-capability <labId> ${capability} "Provides ${capability}." --source-type agent --source-path <path-to-.agent-or-implementation>`,
-        'ksworld diff <proposalId>',
-        'ksworld apply <proposalId>',
-      ],
-      conventions: ['additive only -- createDrakarCapability refuses to overwrite an existing file', 'wraps an already-real implementation; never invents one'],
+      location: `<labId>/registry/techniques/<id>.json (schema/technique.schema.json)`,
+      command: ['ksworld diff <proposalId>', 'ksworld apply <proposalId>'],
+      conventions: ['wraps an already-real implementation; never invents one'],
     },
     implementation: {
       language: 'nodejs',
@@ -225,8 +201,8 @@ function buildImplementationSpec(capability: string, context: RequirementContext
     },
     verification: {
       required: true,
-      checks: ['ksworld validate <ref> reports no unresolved capability for this id', 'ksworld search technique ' + capability + ' finds a source: "capability" hit with a resolved provider'],
-      tests: ['ksworld diagnose ' + capability + ' returns type: "resolved"'],
+      checks: ['ksworld validate <ref> reports no unresolved capability for this id', 'ksworld search technique ' + capability + ' finds a matching hit'],
+      tests: ['ksworld diagnose ' + capability + ' returns a non-"missing_technique" type'],
     },
     references,
     uncertainties,
@@ -238,8 +214,7 @@ function buildImplementationSpec(capability: string, context: RequirementContext
  * (doc §2). Deterministic: same projection + same `capability`/`context`
  * always produces the same output -- no LLM call, no random id, no
  * timestamp, every list pre-sorted. worldctl only describes; it never writes
- * a Technique, a `.drakar.json`, or touches the `.gflow` this capability came
- * from (doc §18/§19).
+ * a Technique or touches the `.gflow` this capability came from (doc §18/§19).
  */
 export function diagnoseCapability(projection: WorldProjection, capability: string, context: RequirementContext = {}): CapabilityDiagnosis {
   const base: Pick<CapabilityDiagnosis, 'capability' | 'requirement_id' | 'requirement_name'> = {
@@ -261,41 +236,8 @@ export function diagnoseCapability(projection: WorldProjection, capability: stri
     };
   }
 
-  const capabilitySourced = hits.filter((h) => h.source === 'capability');
-
-  if (capabilitySourced.length > 1) {
-    return {
-      ...base,
-      type: 'duplicate_candidate',
-      reason: `${capabilitySourced.length} capability Techniques all claim "${capability}" -- Order resolution picks one silently (last one indexed wins)`,
-      matches: capabilitySourced.map(toMatch),
-    };
-  }
-
-  if (capabilitySourced.length === 1) {
-    const technique = capabilitySourced[0];
-    if (!technique.providedBy) {
-      return {
-        ...base,
-        type: 'existing_but_provider_missing',
-        reason: `${formatRef(technique.ref)}: capability has no resolved provider (source.path matched no known agent)`,
-        matches: [toMatch(technique)],
-      };
-    }
-    return {
-      ...base,
-      type: 'resolved',
-      reason: `${formatRef(technique.ref)} -> ${formatRef(technique.providedBy)}`,
-      matches: [toMatch(technique)],
-    };
-  }
-
-  // No capability-sourced hit: every match is registry/main/package -- real,
-  // but none of them is ever reachable through an Order's `requires[]`
-  // (persistence/index.ts's techniquesByCapabilityId only indexes `capability`
-  // docs). Priority: registry > main > package, since a registry Technique is
-  // already build-integrated and one step from `create-capability
-  // --source-type registry`; a package Technique needs the protocol
+  // Priority: registry > main > package, since a registry Technique is
+  // already build-integrated; a package Technique needs the protocol
   // acknowledged first (see technique.ts's own doc comment).
   const bySource = (source: Technique['source']) => hits.find((h) => h.source === source);
   const registryHit = bySource('registry');
@@ -315,7 +257,7 @@ export function diagnoseCapability(projection: WorldProjection, capability: stri
     return {
       ...base,
       type: 'existing_but_unregistered',
-      reason: `${formatRef(mainHit.ref)}: matched a Lab's own main.json claim, wrapped in neither operations/registry.json nor a *.drakar.json capability`,
+      reason: `${formatRef(mainHit.ref)}: matched a Lab's own main.json claim, wrapped in no operations/registry.json operation`,
       matches: hits.map(toMatch),
     };
   }
@@ -324,12 +266,12 @@ export function diagnoseCapability(projection: WorldProjection, capability: stri
   return {
     ...base,
     type: 'protocol_gap',
-    reason: `${formatRef(packageHit!.ref)}: matched a package (cap-tech-pipe-lab-style) Technique -- that registry's own Capability layer is not a worldctl concept yet, so an Order's requires[] cannot reach it`,
+    reason: `${formatRef(packageHit!.ref)}: matched a package (cap-tech-pipe-lab-style) Technique -- that registry's own Capability layer is not a resolvable requirement source yet`,
     matches: hits.map(toMatch),
     required_extension: {
-      gap: 'worldctl indexes package Techniques (model/technique.ts: source "package") but has no matching "package capability" Ref kind or resolution path for requires[]',
+      gap: 'worldctl indexes package Techniques (model/technique.ts: source "package") but has no requirement-resolution path for them beyond exactMatches()',
       benefitsFrom: hits.map((h) => formatRef(h.ref)),
-      minimalExtension: 'either wrap the package Technique in a *.drakar.json capability (same as any other existing implementation), or teach persistence/index.ts to index registry/capabilities/*.json as requires-reachable directly',
+      minimalExtension: 'teach persistence/index.ts to index registry/capabilities/*.json as requires-reachable directly',
     },
   };
 }

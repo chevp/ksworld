@@ -8,7 +8,6 @@ import type { Data } from '../model/data.js';
 import type { Lab } from '../model/lab.js';
 import type { Launcher } from '../model/launcher.js';
 import type { Layout } from '../model/layout.js';
-import type { Order } from '../model/order.js';
 import type { Recipe } from '../model/recipe.js';
 import type { AgentRef, LabRef, Ref, TechniqueRef } from '../model/refs.js';
 import { formatRef, makeRef, parseRef } from '../model/refs.js';
@@ -20,7 +19,6 @@ import { WORKFLOW_CATEGORIES } from '../model/workflow.js';
 import { WorldGraph } from '../graph/world-graph.js';
 import { parseActionDocument } from './parsers/action.js';
 import { parseAgentDocument } from './parsers/agent.js';
-import { parseDrakarDocument, isKnownDrakarKind } from './parsers/drakar.js';
 import { parseCapTechTechnique } from './parsers/capTechTechnique.js';
 import { parseNexoDocument } from './parsers/nexo.js';
 import { parseOperationRegistry, parseTomlFile } from './parsers/toml.js';
@@ -41,7 +39,6 @@ export interface WorldProjection {
   recipes: Map<string, Recipe>;
   agents: Map<string, Agent>;
   actions: Map<string, Action>;
-  orders: Map<string, Order>;
   requests: Map<string, Request>;
   data: Map<string, Data>;
   launchers: Map<string, Launcher>;
@@ -151,17 +148,6 @@ interface PendingDelegate {
   targetPath: string;
 }
 
-interface PendingCapabilityProvider {
-  techniqueRef: TechniqueRef;
-  sourcePath: string;
-}
-
-interface PendingCapabilityRef {
-  capabilityId: string;
-  unresolvedFrom: Ref;
-  addEdge: (target: TechniqueRef) => void;
-}
-
 interface PendingLabRequire {
   lab: Lab;
   /** Raw `main.json` `requires[]` entries — fully-qualified refs, e.g. `technique.content-labs/engine/mannequin-lab.rig`. */
@@ -182,7 +168,6 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
     recipes: new Map(),
     agents: new Map(),
     actions: new Map(),
-    orders: new Map(),
     requests: new Map(),
     data: new Map(),
     launchers: new Map(),
@@ -196,10 +181,7 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
 
   const pathToRef = new Map<string, Ref>();
   const techniquesByLabAndName = new Map<string, Map<string, TechniqueRef>>();
-  const techniquesByCapabilityId = new Map<string, TechniqueRef>();
   const pendingDelegates: PendingDelegate[] = [];
-  const pendingCapabilityProviders: PendingCapabilityProvider[] = [];
-  const pendingCapabilityRefs: PendingCapabilityRef[] = [];
   const pendingLaunchers: PendingLauncher[] = [];
   const pendingLabRequires: PendingLabRequire[] = [];
 
@@ -253,11 +235,11 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
     // Technique: main.json's provides.techniques[] (content.build/1 Lab
     // manifest) -- a Lab's OWN claim about what it already provides. Read as
     // evidence pointing at a real file, exactly like a registry.json
-    // operation or a drakar capability; nobody re-verifies the file actually
-    // implements the claim. This is the third, previously-missing source
+    // operation; nobody re-verifies the file actually implements the claim.
+    // This is the third, previously-missing source
     // (docs/capability-catalog.json's "EXISTING_UNREGISTERED": a real
-    // `*.mechanic.lua` that neither registry.json nor a drakar capability
-    // ever pointed at). `main.json`'s `workspace`/`unit` keys (the real
+    // `*.mechanic.lua` that registry.json never pointed at). `main.json`'s
+    // `workspace`/`unit` keys (the real
     // content.build/1 recipe eon.exe reads) are left untouched — `provides`
     // is a new, optional, additive key next to them; eon.exe's own reader
     // (frostlib/BuildModel.cpp) only ever looks up the keys it names, so an
@@ -346,7 +328,6 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
   const eonFiles: string[] = [];
   const agentFiles: string[] = [];
   const actionFiles: string[] = [];
-  const drakarFiles: string[] = [];
   const dataFiles: string[] = [];
   const wishFiles: string[] = [];
   const nexoFiles: string[] = [];
@@ -368,7 +349,6 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
   for await (const entry of walk(root)) {
     if (entry.isDirectory) continue;
     if (entry.name.endsWith('.glayout.json')) layoutFiles.push(entry.path);
-    else if (entry.name.endsWith('.drakar.json')) drakarFiles.push(entry.path);
     else if (entry.name.endsWith('.agent')) agentFiles.push(entry.path);
     else if (entry.name.endsWith('.action')) actionFiles.push(entry.path);
     else if (entry.name.endsWith('.eon')) eonFiles.push(entry.path);
@@ -696,9 +676,7 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
       name: doc.name ?? baseName,
       description: doc.description,
       delegatesTo: [],
-      provides: [],
       declaredCapabilities: doc.capabilities ?? [],
-      runner: 'nexo',
       path: filePath,
       provenance: 'authored',
       lifecycle: 'canonical',
@@ -713,7 +691,7 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
     }
   }
 
-  // Launcher: *.nexo — a pointer at a Workflow/Recipe or Agent, not worldctl's `order` (model/launcher.ts).
+  // Launcher: *.nexo — a pointer at a Workflow/Recipe or Agent (model/launcher.ts).
   for (const filePath of nexoFiles) {
     let doc;
     try {
@@ -835,115 +813,7 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
     projection.graph.addObject(ref, request);
   }
 
-  // *.drakar.json — dispatch by kind
-  for (const filePath of drakarFiles) {
-    let doc;
-    try {
-      doc = await parseDrakarDocument(filePath);
-    } catch (err) {
-      console.error(`ksworld: failed to parse ${filePath}: ${(err as Error).message}`);
-      continue;
-    }
-    if (!isKnownDrakarKind(doc.kind)) continue;
-    const lab = findAncestorLab(filePath);
-    const labIdKey = idKeyFor(lab, filePath);
-
-    if (doc.kind === 'capability') {
-      const ref = makeRef('technique', `${labIdKey}.${doc.id}`);
-      const technique: Technique = {
-        ref,
-        labRef: lab?.ref,
-        source: 'capability',
-        name: doc.id,
-        summary: doc.description,
-        path: filePath,
-        provenance: 'authored',
-        lifecycle: 'canonical',
-      };
-      projection.techniques.set(formatRef(ref), technique);
-      projection.graph.addObject(ref, technique);
-      techniquesByCapabilityId.set(doc.id, ref);
-      if (doc.source?.path) {
-        const resolvedSourcePath = path.isAbsolute(doc.source.path)
-          ? path.resolve(doc.source.path)
-          : path.resolve(path.dirname(filePath), doc.source.path);
-        pendingCapabilityProviders.push({ techniqueRef: ref, sourcePath: resolvedSourcePath });
-      }
-    } else if (doc.kind === 'workflow') {
-      const ref = makeRef('workflow', `${labIdKey}.${doc.id}`);
-      const workflow: Workflow = {
-        ref,
-        labRef: lab?.ref,
-        source: 'drakar',
-        name: doc.id,
-        description: doc.description,
-        jobs: [],
-        requires: [],
-        path: filePath,
-        provenance: 'authored',
-        lifecycle: 'canonical',
-      };
-      projection.workflows.set(formatRef(ref), workflow);
-      projection.graph.addObject(ref, workflow);
-    } else if (doc.kind === 'agent') {
-      const ref = makeRef('agent', `${labIdKey}.${doc.id}`);
-      const resolveNear = (relOrAbs: string) =>
-        path.isAbsolute(relOrAbs) ? path.resolve(relOrAbs) : path.resolve(path.dirname(filePath), relOrAbs);
-      const isClaude = doc.runner === 'claude';
-      const agent: Agent = {
-        ref,
-        labRef: lab?.ref,
-        source: 'drakar',
-        name: doc.id,
-        description: doc.description,
-        delegatesTo: [],
-        provides: [],
-        declaredCapabilities: doc.requires ?? [],
-        runner: isClaude ? 'claude' : 'nexo',
-        promptPath: isClaude && doc.promptFile ? resolveNear(doc.promptFile) : undefined,
-        policyPaths: isClaude && doc.promptFile && doc.policyFiles?.length ? doc.policyFiles.map(resolveNear) : undefined,
-        path: filePath,
-        provenance: 'authored',
-        lifecycle: 'canonical',
-      };
-      projection.agents.set(formatRef(ref), agent);
-      projection.graph.addObject(ref, agent);
-      pathToRef.set(filePath, ref);
-      for (const capabilityId of doc.provides ?? []) {
-        pendingCapabilityRefs.push({
-          capabilityId,
-          unresolvedFrom: ref,
-          addEdge: (target) => {
-            agent.provides.push(target);
-            projection.graph.addEdge({ from: ref, relation: 'provides', to: target });
-          },
-        });
-      }
-    } else if (doc.kind === 'request') {
-      const ref = makeRef('order', `${labIdKey}.${doc.id}`);
-      const requiresRefs: TechniqueRef[] = [];
-      const order: Order = { ref, labRef: lab?.ref, name: doc.id, requires: requiresRefs, path: filePath, provenance: 'authored', lifecycle: 'canonical' };
-      projection.orders.set(formatRef(ref), order);
-      projection.graph.addObject(ref, order);
-      for (const capabilityId of doc.requires ?? []) {
-        pendingCapabilityRefs.push({
-          capabilityId,
-          unresolvedFrom: ref,
-          addEdge: (target) => {
-            requiresRefs.push(target);
-            projection.graph.addEdge({ from: ref, relation: 'requires', to: target });
-          },
-        });
-      }
-    } else if (doc.kind === 'population') {
-      const ref = makeRef('data', `${labIdKey}.${doc.id}`);
-      const data: Data = { ref, labRef: lab?.ref, source: 'population', name: doc.id, path: filePath, provenance: 'authored', lifecycle: 'canonical' };
-      projection.data.set(formatRef(ref), data);
-      projection.graph.addObject(ref, data);
-    }
-  }
-
-  // Second pass: resolve path-based and capability-id-based edges.
+  // Second pass: resolve path-based edges.
   for (const pending of pendingDelegates) {
     const targetRef = pathToRef.get(pending.targetPath);
     if (!targetRef || targetRef.kind !== 'agent') {
@@ -965,25 +835,12 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
     projection.graph.addEdge({ from: pending.launcher.ref, relation: 'launches', to: targetRef });
   }
 
-  for (const pending of pendingCapabilityProviders) {
-    const targetRef = pathToRef.get(path.resolve(pending.sourcePath));
-    if (!targetRef || targetRef.kind !== 'agent') continue;
-    const technique = projection.techniques.get(formatRef(pending.techniqueRef));
-    if (!technique) continue;
-    technique.providedBy = targetRef as AgentRef;
-    projection.graph.addEdge({ from: pending.techniqueRef, relation: 'providedBy', to: targetRef });
-  }
-
-  // Capability: one per distinct id claimed by a Technique -- "capability"
-  // source by its own `name` (the drakar `kind: "capability"` branch
-  // above), "package" source by its `capabilityId` field. Built here, after
-  // providedBy resolution just above, so a Capability's own `providedBy`
-  // reflects the final resolved Agent. N:M by construction: `implementedBy`
-  // collects every Technique claiming the id, in any Lab, from either
-  // source (model/capability.ts).
+  // Capability: one per distinct id claimed by a "package"-sourced Technique's
+  // `capabilityId` field (model/capability.ts). N:M by construction:
+  // `implementedBy` collects every Technique claiming the id, in any Lab.
   const capabilityImplementers = new Map<string, TechniqueRef[]>();
   for (const technique of projection.techniques.values()) {
-    const capabilityId = technique.source === 'capability' ? technique.name : technique.source === 'package' ? technique.capabilityId : undefined;
+    const capabilityId = technique.source === 'package' ? technique.capabilityId : undefined;
     if (!capabilityId) continue;
     const list = capabilityImplementers.get(capabilityId) ?? [];
     list.push(technique.ref);
@@ -991,16 +848,7 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
   }
   for (const [id, implementedBy] of capabilityImplementers) {
     const ref = makeRef('capability', id);
-    const providedByIds = new Set<string>();
-    const providedBy: AgentRef[] = [];
-    for (const techRef of implementedBy) {
-      const provider = projection.techniques.get(formatRef(techRef))?.providedBy;
-      if (provider && !providedByIds.has(formatRef(provider))) {
-        providedByIds.add(formatRef(provider));
-        providedBy.push(provider);
-      }
-    }
-    const capability: Capability = { ref, id, implementedBy, providedBy };
+    const capability: Capability = { ref, id, implementedBy };
     projection.capabilities.set(formatRef(ref), capability);
     projection.graph.addObject(ref, capability);
     for (const techRef of implementedBy) {
@@ -1008,16 +856,10 @@ export async function buildProjection(root: string): Promise<WorldProjection> {
     }
   }
 
-  for (const pending of pendingCapabilityRefs) {
-    const target = techniquesByCapabilityId.get(pending.capabilityId);
-    if (target) pending.addEdge(target);
-    else projection.unresolved.push({ from: pending.unresolvedFrom, kind: 'capability', detail: pending.capabilityId });
-  }
-
   // main.json's `requires[]` -- fully-qualified Technique refs, resolved
   // against every Technique now indexed (any source: registry, main.json
-  // `provides.techniques`, or drakar `capability`). A malformed ref (wrong
-  // kind, unparseable) is reported the same as a real miss: the author wrote
+  // `provides.techniques`, package). A malformed ref (wrong kind,
+  // unparseable) is reported the same as a real miss: the author wrote
   // something that does not resolve, and the distinction is not worth a
   // second unresolved kind.
   for (const pending of pendingLabRequires) {

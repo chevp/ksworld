@@ -1,7 +1,7 @@
 import { formatRef } from '../model/refs.js';
 import type { WorldProjection } from '../persistence/index.js';
 import { migrateActionToJson } from './writers/action-writer.js';
-import { createAgentDocument, createClaudeAgentDocument, createDrakarCapability, createDrakarRequest, patchAgentDocument } from './writers/agent-writer.js';
+import { createAgentDocument, patchAgentDocument } from './writers/agent-writer.js';
 import { patchEonYaml, replaceEonStepReference } from './writers/eon-writer.js';
 import { readSidecarJson, writeSidecarJson } from './writers/sidecar-writer.js';
 import type { MutationOperation } from './operations.js';
@@ -20,12 +20,6 @@ function requireLab(projection: WorldProjection, labId: string) {
  */
 export async function applyMutation(projection: WorldProjection, operation: MutationOperation): Promise<string[]> {
   switch (operation.kind) {
-    case 'createOrder': {
-      const lab = requireLab(projection, operation.labId);
-      const filePath = await createDrakarRequest(lab.dir, operation.id, operation.requires);
-      return [filePath];
-    }
-
     case 'updateWorkflow': {
       const workflow = projection.graph.resolve(operation.workflowRef);
       if (!workflow || !('source' in workflow)) throw new Error(`no such workflow "${formatRef(operation.workflowRef)}"`);
@@ -60,20 +54,6 @@ export async function applyMutation(projection: WorldProjection, operation: Muta
         });
         return [agent.path];
       }
-      if (operation.from.kind === 'order' && operation.relation === 'requires') {
-        const order = projection.orders.get(formatRef(operation.from));
-        if (!order) throw new Error(`no such order "${formatRef(operation.from)}"`);
-        const target = projection.graph.resolve(operation.to);
-        const capabilityId = target ? (target as { name: string }).name : operation.to.id;
-        await patchAgentDocument(order.path, (doc) => {
-          const requires = Array.isArray(doc.requires) ? (doc.requires as string[]) : [];
-          const next = isAdd
-            ? requires.includes(capabilityId) ? requires : [...requires, capabilityId]
-            : requires.filter((r) => r !== capabilityId);
-          doc.requires = next;
-        });
-        return [order.path];
-      }
       throw new Error(`${operation.kind} is not supported for from-kind "${operation.from.kind}" / relation "${operation.relation}" in v1`);
     }
 
@@ -89,18 +69,6 @@ export async function applyMutation(projection: WorldProjection, operation: Muta
         if (!changed) throw new Error(`"--step ${oldTechnique.name}" not found in ${workflow.path}`);
         return [workflow.path];
       }
-      if (operation.from.kind === 'order') {
-        const order = projection.orders.get(formatRef(operation.from));
-        if (!order) throw new Error(`no such order "${formatRef(operation.from)}"`);
-        const oldTechnique = projection.techniques.get(formatRef(operation.oldTechnique));
-        const newTechnique = projection.techniques.get(formatRef(operation.newTechnique));
-        if (!oldTechnique || !newTechnique) throw new Error(`unknown technique ref in replaceTechnique`);
-        await patchAgentDocument(order.path, (doc) => {
-          const requires = Array.isArray(doc.requires) ? (doc.requires as string[]) : [];
-          doc.requires = requires.map((r) => (r === oldTechnique.name ? newTechnique.name : r));
-        });
-        return [order.path];
-      }
       throw new Error(`replaceTechnique is not supported for from-kind "${operation.from.kind}" in v1`);
     }
 
@@ -110,18 +78,6 @@ export async function applyMutation(projection: WorldProjection, operation: Muta
       const refString = formatRef(operation.dataRef);
       const next = existing.includes(refString) ? existing : [...existing, refString];
       const filePath = await writeSidecarJson(lab.dir, 'data.json', next);
-      return [filePath];
-    }
-
-    case 'changeRoute': {
-      const workflow = projection.graph.resolve(operation.workflowRef);
-      if (!workflow || !('labRef' in workflow)) throw new Error(`no such workflow "${formatRef(operation.workflowRef)}"`);
-      const workflowLabRef = (workflow as { labRef?: { id: string } }).labRef;
-      if (!workflowLabRef) throw new Error(`workflow "${formatRef(operation.workflowRef)}" has no Lab -- nowhere to write routes.json`);
-      const lab = requireLab(projection, workflowLabRef.id);
-      const existing = await readSidecarJson<Record<string, string>>(lab.dir, 'routes.json', {});
-      existing[operation.orderKind] = formatRef(operation.workflowRef);
-      const filePath = await writeSidecarJson(lab.dir, 'routes.json', existing);
       return [filePath];
     }
 
@@ -139,28 +95,8 @@ export async function applyMutation(projection: WorldProjection, operation: Muta
       return [action.path];
     }
 
-    case 'createCapability': {
-      const lab = requireLab(projection, operation.labId);
-      const filePath = await createDrakarCapability(lab.dir, operation.id, operation.description, operation.source);
-      return [filePath];
-    }
-
     case 'createAgent': {
       const lab = requireLab(projection, operation.labId);
-      if (operation.runner === 'claude') {
-        if (operation.policyFiles?.length && !operation.promptFile) {
-          throw new Error('createAgent with runner:"claude": policyFiles requires promptFile');
-        }
-        const filePath = await createClaudeAgentDocument(
-          lab.dir,
-          operation.name,
-          operation.description,
-          operation.capabilities,
-          operation.promptFile,
-          operation.policyFiles,
-        );
-        return [filePath];
-      }
       const filePath = await createAgentDocument(
         lab.dir,
         operation.name,
@@ -170,18 +106,6 @@ export async function applyMutation(projection: WorldProjection, operation: Muta
         operation.capabilities,
       );
       return [filePath];
-    }
-
-    case 'updateCapabilitySource': {
-      const technique = projection.techniques.get(formatRef(operation.techniqueRef));
-      if (!technique) throw new Error(`no such technique "${formatRef(operation.techniqueRef)}"`);
-      if (technique.source !== 'capability') {
-        throw new Error(`updateCapabilitySource is only supported for capability-sourced techniques, not "${formatRef(operation.techniqueRef)}"`);
-      }
-      await patchAgentDocument(technique.path, (doc) => {
-        doc.source = operation.source;
-      });
-      return [technique.path];
     }
 
     default: {

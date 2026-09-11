@@ -1,12 +1,8 @@
 import { formatRef, makeRef } from '../model/refs.js';
-import type { MutationOperation } from '../mutate/operations.js';
 import type { WorldProjection } from '../persistence/index.js';
 import type { WorldRepository } from '../persistence/repository.js';
-import { planToJson, type PlanJson } from '../cli/format.js';
 import { findContent } from '../read/content.js';
-import { diagnoseCapability } from './diagnose.js';
-import { resolveCapabilityCandidates } from './capability.js';
-import { planOrder } from './plan.js';
+import { diagnoseCapability, exactMatches } from './diagnose.js';
 
 /** One `.gflow`'s already-compiled `requirements[]` entry (gflow.schema.json) — only the fields resolution needs. */
 export interface GflowRequirement {
@@ -35,6 +31,13 @@ export interface UnmatchedRequirement {
   reason: string;
 }
 
+export interface MatchedRequirement {
+  id: string;
+  capability: string;
+  technique: string;
+  lab: string;
+}
+
 export interface GplanAsset {
   sourceId: string;
   kind: string;
@@ -50,7 +53,7 @@ export interface GplanDocument {
   gflow: string;
   gameId: string;
   resolvedAt: string;
-  plans: PlanJson[];
+  matched: MatchedRequirement[];
   unmatched: UnmatchedRequirement[];
   assets: GplanAsset[];
 }
@@ -60,7 +63,7 @@ export interface GplanDocument {
  * the already-compiled `requirements[]` + `assets.generation[]` — nothing
  * else of the `.gflow`'s flat namespace vocabulary. Kept as a narrow slice
  * (not `gflow.schema.json`'s full shape) so `resolveGflow` stays a generic
- * requirements-in/plan-out step, not a second place that understands the
+ * requirements-in/report-out step, not a second place that understands the
  * `.gflow` schema.
  */
 export interface GflowSlice {
@@ -71,33 +74,22 @@ export interface GflowSlice {
 }
 
 /**
- * Everything `gworldui/src/services/RunService.cpp`'s `dispatchMatch()` +
- * `dispatchBuild()`'s propose/apply/plan portion used to do over N `worldctl`
- * subprocess calls stitched together in C++ — now ONE in-process pass. See
- * docs/ideas/execution-plan/gflow-specification.md and
- * `content-gamedna-lab/.kosmos/workflows/gflow.schema.json`'s `jobs`
- * description (removed alongside this — resolution is no longer a `.gflow`-
- * declared job, it is this command).
- *
- * `apply` (writing a new Order into `labs/**`) happens here automatically,
- * without a confirmation gate — same as `RunService.cpp` did silently before
- * this change. Only `worldctl build` (real generation, real cost) is ever
- * gated behind a confirmation, and that stays a `gworldui` UI concern reading
- * the `.gplan.json` this function produces.
+ * Requirement -> Technique match report + asset resolution. Read-only: this
+ * function writes nothing (no Order, no Agent dispatch — ksworld executes
+ * no native process, see README.md). For each requirement it reports which
+ * Technique would satisfy it (`exactMatches`, same rule `diagnose.ts` uses),
+ * or, when nothing matches, `diagnoseCapability`'s reason.
  */
 export async function resolveGflow(repo: WorldRepository, input: GflowSlice): Promise<GplanDocument> {
   const projection = await repo.load();
 
-  const matchedByLab = new Map<string, string[]>();
+  const matched: MatchedRequirement[] = [];
   const unmatched: UnmatchedRequirement[] = [];
   let assetGenerationLabId: string | undefined;
 
   for (const req of input.requirements) {
-    // Capability Ref -> implementedBy/providedBy -> candidates, N:M, lowest ref
-    // wins deterministically (resolve/capability.ts). Skip a candidate with no
-    // Lab context (2026-09-10 decoupling: a Technique can match with labRef
-    // undefined) rather than failing outright -- another candidate may have one.
-    const chosen = resolveCapabilityCandidates(projection, req.capability).find((c) => c.technique.labRef);
+    const hits = exactMatches(projection, req.capability).filter((t) => t.labRef);
+    const chosen = hits[0];
 
     if (!chosen) {
       const diag = diagnoseCapability(projection, req.capability, {
@@ -112,57 +104,18 @@ export async function resolveGflow(repo: WorldRepository, input: GflowSlice): Pr
       continue;
     }
 
-    const labId = chosen.technique.labRef!.id;
-    const list = matchedByLab.get(labId) ?? [];
-    list.push(req.capability);
-    matchedByLab.set(labId, list);
+    const labId = chosen.labRef!.id;
+    matched.push({ id: req.id, capability: req.capability, technique: formatRef(chosen.ref), lab: labId });
     if (req.capability === 'asset_generation') assetGenerationLabId = labId;
   }
 
-  const orderedLabs: string[] = [];
-  for (const [labId, capabilities] of matchedByLab) {
-    const operation: MutationOperation = { kind: 'createOrder', labId, id: input.gameId, requires: capabilities };
-    try {
-      await repo.applyMutation(operation);
-      orderedLabs.push(labId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('refusing to overwrite existing')) {
-        // createDrakarRequest() (mutate/writers/agent-writer.ts) refuses this
-        // wording when declarations/requests/<id>.drakar.json already exists
-        // — not a failure, the order from an earlier resolve is reused as-is.
-        orderedLabs.push(labId);
-        continue;
-      }
-      unmatched.push({ id: '', capability: capabilities.join(','), reason: `order.${labId}.${input.gameId}: ${message}` });
-    }
-  }
-
-  // Re-derive at most once, after every order in this run was created --
-  // `planOrder` needs the freshly created Orders in the projection; the
-  // asset lookups below don't depend on them, but reuse this same
-  // projection rather than reload again.
-  const finalProjection = orderedLabs.length > 0 ? await repo.load() : projection;
-
-  const plans: PlanJson[] = [];
-  for (const labId of orderedLabs) {
-    const orderRef = makeRef('order', `${labId}.${input.gameId}`);
-    try {
-      const plan = await planOrder(finalProjection, orderRef);
-      plans.push(planToJson(plan));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      unmatched.push({ id: '', capability: (matchedByLab.get(labId) ?? []).join(','), reason: `plan(order.${labId}.${input.gameId}): ${message}` });
-    }
-  }
-
-  const resolvedAssets = input.assetsGeneration.map((entry) => resolveAsset(finalProjection, entry, assetGenerationLabId));
+  const resolvedAssets = input.assetsGeneration.map((entry) => resolveAsset(projection, entry, assetGenerationLabId));
 
   return {
     gflow: input.gflowPath,
     gameId: input.gameId,
     resolvedAt: new Date().toISOString(),
-    plans,
+    matched,
     unmatched,
     assets: resolvedAssets,
   };

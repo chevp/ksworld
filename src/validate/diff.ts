@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { formatRef } from '../model/refs.js';
 import type { MutationOperation } from '../mutate/operations.js';
 import { readSidecarJson } from '../mutate/writers/sidecar-writer.js';
@@ -33,11 +32,6 @@ export async function computeDiff(projection: WorldProjection, operation: Mutati
   const lines: DiffLine[] = [];
 
   switch (operation.kind) {
-    case 'createOrder': {
-      lines.push({ sign: '+', text: `order.${operation.labId}.${operation.id}  requires  [${operation.requires.join(', ')}]` });
-      break;
-    }
-
     case 'updateWorkflow': {
       const workflow = projection.graph.resolve(operation.workflowRef) as { path: string } | undefined;
       const oldValue = workflow ? getIn(await parseYamlFile(workflow.path), operation.path.split('.')) : undefined;
@@ -68,17 +62,6 @@ export async function computeDiff(projection: WorldProjection, operation: Mutati
       break;
     }
 
-    case 'changeRoute': {
-      const workflow = projection.graph.resolve(operation.workflowRef) as { labRef: { id: string } } | undefined;
-      const lab = workflow ? projection.labs.get(workflow.labRef.id) : undefined;
-      const routes = lab ? await readSidecarJson<Record<string, string>>(lab.dir, 'routes.json', {}) : {};
-      lines.push({
-        sign: '~',
-        text: `route[${operation.orderKind}]  ${routes[operation.orderKind] ?? '(unset)'} -> ${formatRef(operation.workflowRef)}`,
-      });
-      break;
-    }
-
     case 'promoteLab': {
       const lab = projection.labs.get(operation.labId);
       const current = lab ? await readSidecarJson<{ status?: string }>(lab.dir, 'lab.json', {}) : {};
@@ -99,29 +82,10 @@ export async function computeDiff(projection: WorldProjection, operation: Mutati
       break;
     }
 
-    case 'createCapability': {
-      lines.push({
-        sign: '+',
-        text: `technique.${operation.labId}.${operation.id}  (capability)  ${operation.description}`,
-      });
-      break;
-    }
-
     case 'createAgent': {
-      const kindLabel = operation.runner === 'claude' ? 'agent, runner: claude' : 'agent/1';
       lines.push({
         sign: '+',
-        text: `agent.${operation.labId}.${operation.name}  (${kindLabel})  ${operation.description}`,
-      });
-      break;
-    }
-
-    case 'updateCapabilitySource': {
-      const technique = projection.techniques.get(formatRef(operation.techniqueRef)) as { path: string } | undefined;
-      const oldSource = technique ? getIn(JSON.parse(await readFile(technique.path, 'utf-8')), ['source']) : undefined;
-      lines.push({
-        sign: '~',
-        text: `${formatRef(operation.techniqueRef)}  source  ${JSON.stringify(oldSource)} -> ${JSON.stringify(operation.source)}`,
+        text: `agent.${operation.labId}.${operation.name}  (agent/1)  ${operation.description}`,
       });
       break;
     }

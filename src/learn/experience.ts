@@ -1,8 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { CapabilityDiagnosis } from '../resolve/diagnose.js';
 import { diagnoseCapability } from '../resolve/diagnose.js';
-import type { GplanAsset, GplanDocument } from '../resolve/resolveGflow.js';
-import type { PlanJson } from '../cli/format.js';
+import type { GplanAsset, GplanDocument, MatchedRequirement } from '../resolve/resolveGflow.js';
 import type { WorldRepository } from '../persistence/repository.js';
 
 /**
@@ -40,7 +39,7 @@ export interface Experience {
     assetsPending: number;
     assetsUnresolved: number;
   };
-  plans: PlanJson[];
+  matched: MatchedRequirement[];
   failures: ExperienceFailure[];
   assets: GplanAsset[];
 }
@@ -51,26 +50,17 @@ function countAssets(assets: GplanAsset[], status: GplanAsset['status']): number
 
 /**
  * Builds one `Experience` from an already-written `.gplan.json` (`worldctl
- * resolve`'s output) -- re-loads the projection once to (a) look up each
- * matched Order's real `requires[]` length (`.gplan.json`'s own `plans[]`
- * only carries the order ref, not which capabilities it bundled -- see
- * `resolveGflow.ts`'s `PlanJson`) and (b) re-run `diagnoseCapability` per
- * unmatched requirement for its full classification. Never builds, never
- * mutates -- read-only, same as `diagnose`/`resolve` themselves.
+ * resolve`'s output) -- re-loads the projection once to re-run
+ * `diagnoseCapability` per unmatched requirement for its full
+ * classification. Never builds, never mutates -- read-only, same as
+ * `diagnose`/`resolve` themselves.
  */
 export async function buildExperience(repo: WorldRepository, gplanPath: string, gplan: GplanDocument): Promise<Experience> {
   const projection = await repo.load();
 
-  let matchedCount = 0;
-  for (const plan of gplan.plans) {
-    const order = projection.orders.get(plan.order);
-    if (order) matchedCount += order.requires.length;
-  }
+  const matchedCount = gplan.matched.length;
 
   const failures: ExperienceFailure[] = gplan.unmatched
-    // resolveGflow.ts also pushes synthetic unmatched[] entries with id: ''
-    // for an order-create/plan failure (not a requirement) -- those have no
-    // requirement to diagnose, skip them here.
     .filter((u) => u.id)
     .map((u) => {
       const diagnosis = diagnoseCapability(projection, u.capability, { id: u.id });
@@ -97,7 +87,7 @@ export async function buildExperience(repo: WorldRepository, gplanPath: string, 
       assetsPending: countAssets(gplan.assets, 'pending'),
       assetsUnresolved: countAssets(gplan.assets, 'unresolved'),
     },
-    plans: gplan.plans,
+    matched: gplan.matched,
     failures,
     assets: gplan.assets,
   };

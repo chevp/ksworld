@@ -2,7 +2,7 @@ import type { Command } from 'commander';
 import type { MutationOperation } from '../../mutate/operations.js';
 import { computeDiff } from '../../validate/diff.js';
 import { formatDiff, formatProposal } from '../format.js';
-import { fail, getProposalStore, getRepository, parseList, requireRefKind, requireRefOfKind, requireRelation } from '../context.js';
+import { getProposalStore, getRepository, parseList, requireRefKind, requireRefOfKind, requireRelation } from '../context.js';
 
 /** `propose` group (operation -> validate -> preview diff; writes only a Proposal, doc §8.2), plus `diff`/`apply` -- the Proposal lifecycle. */
 export function registerProposeCommands(program: Command): void {
@@ -27,14 +27,6 @@ export function registerProposeCommands(program: Command): void {
     .description('removeDependency(from, relation, to)')
     .action(async (fromText: string, relationText: string, toText: string) => {
       await submitProposal({ kind: 'removeDependency', from: requireRefKind(fromText), relation: requireRelation(relationText), to: requireRefKind(toText) });
-    });
-
-  propose
-    .command('create-order <labId> <id>')
-    .description('createOrder(labId, id) — new declarations/requests/<id>.drakar.json')
-    .option('--requires <list>', 'comma-separated capability ids', '')
-    .action(async (labId: string, id: string, opts: { requires: string }) => {
-      await submitProposal({ kind: 'createOrder', labId, id, requires: parseList(opts.requires) });
     });
 
   propose
@@ -67,14 +59,6 @@ export function registerProposeCommands(program: Command): void {
     });
 
   propose
-    .command('change-route <orderKind> <workflowRef>')
-    .description('changeRoute(orderKind, workflowRef)')
-    .action(async (orderKind: string, workflowRefText: string) => {
-      const workflowRef = requireRefOfKind(workflowRefText, 'workflow', 'a workflow');
-      await submitProposal({ kind: 'changeRoute', orderKind, workflowRef });
-    });
-
-  propose
     .command('promote-lab <labId> <status>')
     .description('promoteLab(labId, status)')
     .action(async (labId: string, status: string) => {
@@ -90,62 +74,15 @@ export function registerProposeCommands(program: Command): void {
     });
 
   propose
-    .command('create-capability <labId> <id> <description>')
-    .description('createCapability(labId, id, description) -- new declarations/capabilities/<slug>.drakar.json, wrapping an already-real Technique/Agent so it becomes requires[]-reachable')
-    .option('--source-type <type>', 'source.type, e.g. "registry", "agent" -- only "agent" resolves a providedBy edge', '')
-    .option('--source-path <path>', 'source.path -- absolute or relative to the new .drakar.json', '')
-    .action(async (labId: string, id: string, description: string, opts: { sourceType: string; sourcePath: string }) => {
-      const source = opts.sourceType && opts.sourcePath ? { type: opts.sourceType, path: opts.sourcePath } : undefined;
-      await submitProposal({ kind: 'createCapability', labId, id, description, source });
-    });
-
-  propose
     .command('create-agent <labId> <name> <description>')
-    .description(
-      "createAgent(labId, name, description) -- default --runner nexo: new declarations/agents/<name>.agent (agent/1), the reachable provider a capability's source.path can point at, never authors the wrapped implementation itself. --runner claude: new declarations/agents/<name>.drakar.json whose chat/run/build/run-capability target spawns `claude -p` instead of `nexo.exe run` (cli/claude-runner.ts); omitting --prompt-file falls back to worldctl's own built-in default prompt (prompts/promptLoader.ts)",
-    )
-    .option('--runner <nexo|claude>', 'which process executes this Agent', 'nexo')
-    .option('--prompt-file <path>', '--runner claude only: Core system-prompt file, relative to the new document -- omit to use the built-in default', '')
-    .option('--policy-file <list>', '--runner claude + --prompt-file only: comma-separated ordered policy files, relative to the new document, always loaded alongside --prompt-file', '')
-    .option('--goal <text>', '--runner nexo only: goal.description -- what the run must confirm/read, never generate', '')
-    .option('--context-file <list>', '--runner nexo only: comma-separated context.files, relative to the input root', '')
+    .description("createAgent(labId, name, description) -- new declarations/agents/<name>.agent (agent/1); never authors the wrapped implementation itself")
+    .option('--goal <text>', 'goal.description -- what the run must confirm/read, never generate', '')
+    .option('--context-file <list>', 'comma-separated context.files, relative to the input root', '')
     .option('--capabilities <list>', 'comma-separated capabilities, default "file.read"', 'file.read')
-    .action(
-      async (
-        labId: string,
-        name: string,
-        description: string,
-        opts: { runner: string; promptFile: string; policyFile: string; goal: string; contextFile: string; capabilities: string },
-      ) => {
-        if (opts.runner !== 'nexo' && opts.runner !== 'claude') fail(`--runner must be "nexo" or "claude", got "${opts.runner}"`);
-        if (opts.runner === 'nexo' && opts.policyFile) fail('--policy-file requires --runner claude');
-        if (opts.policyFile && !opts.promptFile) fail('--policy-file requires --prompt-file');
-        const contextFiles = parseList(opts.contextFile);
-        const policyFiles = parseList(opts.policyFile);
-        const capabilities = parseList(opts.capabilities);
-        await submitProposal({
-          kind: 'createAgent',
-          labId,
-          name,
-          description,
-          goal: opts.goal,
-          contextFiles,
-          capabilities,
-          runner: opts.runner as 'nexo' | 'claude',
-          promptFile: opts.promptFile || undefined,
-          policyFiles: policyFiles.length > 0 ? policyFiles : undefined,
-        });
-      },
-    );
-
-  propose
-    .command('update-capability-source <techniqueRef>')
-    .description("updateCapabilitySource(techniqueRef, source) -- patches an existing capability-sourced Technique's .drakar.json source field in place")
-    .requiredOption('--source-type <type>', 'source.type, e.g. "agent" -- only "agent" resolves a providedBy edge')
-    .requiredOption('--source-path <path>', 'source.path -- absolute or relative to the .drakar.json')
-    .action(async (techniqueRefText: string, opts: { sourceType: string; sourcePath: string }) => {
-      const techniqueRef = requireRefOfKind(techniqueRefText, 'technique', 'a technique');
-      await submitProposal({ kind: 'updateCapabilitySource', techniqueRef, source: { type: opts.sourceType, path: opts.sourcePath } });
+    .action(async (labId: string, name: string, description: string, opts: { goal: string; contextFile: string; capabilities: string }) => {
+      const contextFiles = parseList(opts.contextFile);
+      const capabilities = parseList(opts.capabilities);
+      await submitProposal({ kind: 'createAgent', labId, name, description, goal: opts.goal, contextFiles, capabilities });
     });
 
   program

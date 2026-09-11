@@ -1,7 +1,7 @@
 import type { LabRef, TechniqueRef, WorkflowRef } from './refs.js';
 import type { Lifecycle, Provenance } from './provenance.js';
 
-export type WorkflowSource = 'eon' | 'drakar';
+export type WorkflowSource = 'eon';
 
 /** Known `<verb>.<category>.eon` category suffixes — metadata only, not a Ref kind. */
 export const WORKFLOW_CATEGORIES = ['build', 'generation', 'processing', 'validation', 'runtime'] as const;
@@ -23,7 +23,7 @@ export interface WorkflowJob {
 /**
  * Dynamic, rule-based composition: chooses Techniques (and resolves their
  * dependencies) via a `.eon` pipeline (`kosflow/2`/`kosaction/1`, filename
- * not ending `.recipe.eon`) or a `*.drakar.json` with `"kind":"workflow"`.
+ * not ending `.recipe.eon`).
  */
 export interface Workflow {
   ref: WorkflowRef;

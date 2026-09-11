@@ -5,7 +5,6 @@ export const REF_KINDS = [
   'recipe',
   'agent',
   'action',
-  'order',
   'request',
   'data',
   'launcher',
@@ -35,7 +34,6 @@ export type WorkflowRef = Ref<'workflow'>;
 export type RecipeRef = Ref<'recipe'>;
 export type AgentRef = Ref<'agent'>;
 export type ActionRef = Ref<'action'>;
-export type OrderRef = Ref<'order'>;
 export type RequestRef = Ref<'request'>;
 export type DataRef = Ref<'data'>;
 export type LauncherRef = Ref<'launcher'>;
@@ -52,7 +50,6 @@ export type AnyRef =
   | RecipeRef
   | AgentRef
   | ActionRef
-  | OrderRef
   | RequestRef
   | DataRef
   | LauncherRef
@@ -77,7 +74,7 @@ export function formatRef(ref: Ref): string {
 /**
  * Parses `kind.id` — kind is the segment before the first dot, id is
  * everything after (ids routinely contain further dots, e.g. operation
- * names or drakar capability ids).
+ * names or capability ids).
  */
 export function parseRef(text: string): AnyRef {
   const dot = text.indexOf('.');
