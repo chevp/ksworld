@@ -103,4 +103,4 @@ worldctl change lands here only when someone ports it.
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE)
